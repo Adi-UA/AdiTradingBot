@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+
+import argparse
+from datetime import datetime
+
+import backtrader as bt
+import numpy as np
+import yfinance as yf
+from alpaca.trading.enums import OrderSide
+
+from config import PAPER, PAPER_ALPACA_API_KEY_ID, PAPER_ALPACA_API_SECRET_KEY
+from trader import Trader
+
+
+class BackTestTraderStrategy(bt.Strategy):
+    """
+    Backtesting strategy for the Trader class.
+
+    Attributes:
+        trader (Trader): Instance of the Trader class.
+        prices (list): List to store recent prices.
+    """
+
+    def __init__(self):
+        """
+        Initialize the backtesting strategy.
+        """
+
+        # Initialize the trader and prices list
+        # Note: We won't actually be paper trading since the backtesting happens on the locally downloaded historical
+        # data. However, we still need to use the paper trading API keys to initialize the Trader class.
+        self.trader = Trader(
+            api_key=PAPER_ALPACA_API_KEY_ID,
+            secret_key=PAPER_ALPACA_API_SECRET_KEY,
+            paper=PAPER,
+        )
+        # Store reference to the closing prices
+        self.dataclose = self.datas[0].close
+        self.current_date = self.datas[0].datetime
+        self.last_trade_date = None
+
+    def next(self):
+        """
+        Execute strategy logic on each step (once every 2 days)
+        """
+
+        current_date = self.current_date.date(0)
+        # only trade if it has been 2 days since the last trade
+        if self.last_trade_date is not None:
+            if (current_date - self.last_trade_date).days < 2:
+                return
+
+        # Get the closing prices for the past 5 days
+        short_prices = np.array(self.dataclose.get(size=5))
+        long_prices = np.array(self.dataclose.get(size=20))
+
+        # If we don't have enough data, skip
+        if len(short_prices) < 5 or len(long_prices) < 20:
+            return
+
+        # Make a decision based on the prices and execute the trade
+        side, multiplier = self.trader.make_decision(short_prices, long_prices)
+        if side == OrderSide.BUY:
+            # qty = % of cash trader wants to invest/price of stock = number of shares to buy
+            qty = self.broker.get_cash() * multiplier / self.data.close[0]
+            self.buy(size=qty)
+            self.last_trade_date = current_date
+        elif side == OrderSide.SELL and self.position.size > 0:
+            self.sell(size=self.position.size * multiplier)
+            self.last_trade_date = current_date
+        else:
+            pass
+
+
+def fetch_data(
+    symbol: str, start_date: datetime, end_date: datetime
+) -> bt.feeds.PandasData:
+    """
+    Fetch data from Yahoo Finance API.
+
+    Args:
+        symbol (str): Ticker symbol.
+        start_date (datetime): Start date for data.
+        end_date (datetime): End date for data.
+
+    Returns:
+        bt.feeds.PandasData: Data feed for backtesting.
+    """
+
+    # Convert dates to string
+    start_date = start_date.strftime("%Y-%m-%d")
+    end_date = end_date.strftime("%Y-%m-%d")
+
+    # Fetch data and store in DataFrame
+    df = yf.download(symbol, start=start_date, end=end_date)
+
+    # Drop extra indices
+    df = df.reset_index()
+    df.columns = df.columns.droplevel(1)
+
+    # Create data feed
+    data = bt.feeds.PandasData(dataname=df, datetime=0)
+
+    return data
+
+
+def init_cerbero_instance():
+    cerebro = bt.Cerebro()
+    cerebro.addstrategy(BackTestTraderStrategy)
+
+    return cerebro
+
+
+def main():
+    # Parse arguments
+    args = argparse.ArgumentParser()
+    args.add_argument(
+        "--symbol", type=str, required=True, help="Ticker symbol. Example: VOO"
+    )
+    args.add_argument(
+        "--start_date",
+        type=str,
+        required=True,
+        help="Start date for backtesting. Format: YYYY-MM-DD",
+    )
+    args.add_argument(
+        "--end_date",
+        type=str,
+        required=True,
+        help="End date for backtesting. Format: YYYY-MM-DD",
+    )
+    args.add_argument(
+        "--cash",
+        type=float,
+        default=10000,
+        help="Initial cash for backtesting. Default: 10000",
+    )
+    args = args.parse_args()
+
+    symbol = args.symbol
+    start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+    end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
+
+    # Set up cerebro instance
+    cerebro = init_cerbero_instance()
+    cerebro.broker.set_cash(args.cash)
+    data = fetch_data(symbol, start_date, end_date)
+    cerebro.adddata(data)
+
+    # Run and plot
+    cerebro.run()
+    cerebro.plot()
+
+
+if __name__ == "__main__":
+    main()

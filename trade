@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+
+from config import (
+    ALPACA_API_KEY_ID,
+    ALPACA_API_SECRET_KEY,
+    PAPER,
+    PAPER_ALPACA_API_KEY_ID,
+    PAPER_ALPACA_API_SECRET_KEY,
+    SYMBOL,
+)
+from trader import Trader
+
+
+def main():
+    api_key = PAPER_ALPACA_API_KEY_ID if PAPER else ALPACA_API_KEY_ID
+    secret = PAPER_ALPACA_API_SECRET_KEY if PAPER else ALPACA_API_SECRET_KEY
+    trader = Trader(symbol=SYMBOL, api_key=api_key, secret_key=secret, paper=PAPER)
+    trader.run()
+
+
+if __name__ == "__main__":
+    main()
